@@ -77,6 +77,7 @@ internal fun MainActivity.closeInactiveTabs() {
     if (expired.isEmpty()) return
     expired.forEach { tab ->
         removeDesktopScript(tab)
+        releaseTabWebIdentity(tab)
         onQuiverGuardTabClosed(tab)
         com.jhaiian.clint.mediacapture.MediaCaptureStore.removeTab(tab.id)
         if (!tab.isIncognito) com.jhaiian.clint.ui.FaviconCache.evict(this, tab.url)
@@ -133,7 +134,7 @@ internal fun MainActivity.openNewTabSilent(
     val tab = BrowserTab(id = id, url = url, shortcutId = shortcutId, profileId = WebProfiles.profileOf(webView), webView = webView)
     if (!title.isNullOrBlank()) tab.title = title
     tabManager.add(tab)
-    if (isDesktopMode) addDesktopScript(tab)
+    applyTabWebIdentity(tab, force = true)
     addAutoplayScript(tab)
     addSaveDataScript(tab)
     addDoNotTrackScript(tab)
@@ -146,7 +147,7 @@ internal fun MainActivity.openNewTabSilent(
         onPageFinishedCallback = { url -> if (tabManager.activeTab?.id == tab.id) onPageFinished(url) },
         onTabUrlUpdatedCallback = { wv, url -> onTabUrlUpdated(wv, url) },
         onWebsiteBlockedCallback = { blockedUrl -> onWebsiteBlocked(blockedUrl, tab.url, tab.id) },
-        getDesktopHeaders = { buildRequestHeaders() },
+        getDesktopHeaders = { buildRequestHeaders(profileId = tab.profileId) },
         getTabId = { tab.id },
         isIncognito = { tab.isIncognito },
         isCustomHttpAuthEnabled = { isCustomHttpAuthEnabled() },
@@ -177,7 +178,8 @@ internal fun MainActivity.openNewTabSilent(
     )
     if (deferLoad) tab.pendingUrl = url else {
         prepareCacheForNavigation(tab, url)
-        webView.loadUrl(url)
+        val headers = buildUserAgentClientHintHeaders(tab.profileId)
+        if (headers != null) webView.loadUrl(url, headers) else webView.loadUrl(url)
     }
 }
 
@@ -187,7 +189,7 @@ internal fun MainActivity.openNewTabInBackground(url: String, openerTabId: Strin
     val webView = createWebView(false, WebProfiles.resolve(this, sourceProfile))
     val tab = BrowserTab(url = url, openerTabId = openerTabId, profileId = WebProfiles.profileOf(webView), webView = webView)
     tabManager.addInBackground(tab)
-    if (isDesktopMode) addDesktopScript(tab)
+    applyTabWebIdentity(tab, force = true)
     addAutoplayScript(tab)
     addSaveDataScript(tab)
     addDoNotTrackScript(tab)
@@ -200,7 +202,7 @@ internal fun MainActivity.openNewTabInBackground(url: String, openerTabId: Strin
         onPageFinishedCallback = { url -> if (tabManager.activeTab?.id == tab.id) onPageFinished(url) },
         onTabUrlUpdatedCallback = { wv, url -> onTabUrlUpdated(wv, url) },
         onWebsiteBlockedCallback = { blockedUrl -> onWebsiteBlocked(blockedUrl, tab.url, tab.id) },
-        getDesktopHeaders = { buildRequestHeaders() },
+        getDesktopHeaders = { buildRequestHeaders(profileId = tab.profileId) },
         getTabId = { tab.id },
         isIncognito = { tab.isIncognito },
         isCustomHttpAuthEnabled = { isCustomHttpAuthEnabled() },
@@ -230,7 +232,8 @@ internal fun MainActivity.openNewTabInBackground(url: String, openerTabId: Strin
         }
     )
     prepareCacheForNavigation(tab, url)
-    webView.loadUrl(url)
+    val headers = buildUserAgentClientHintHeaders(tab.profileId)
+    if (headers != null) webView.loadUrl(url, headers) else webView.loadUrl(url)
     updateTabCount()
 }
 
@@ -251,7 +254,7 @@ internal fun MainActivity.openNewTab(isIncognito: Boolean, url: String = getHome
     val webView = createWebView(isIncognito, WebProfiles.resolve(this, requestedProfile))
     val tab = BrowserTab(isIncognito = isIncognito, openerTabId = openerTabId, shortcutId = shortcutId, previousTabId = previousTabId, profileId = WebProfiles.profileOf(webView), webView = webView)
     val index = tabManager.add(tab)
-    if (isDesktopMode) addDesktopScript(tab)
+    applyTabWebIdentity(tab, force = true)
     addAutoplayScript(tab)
     addSaveDataScript(tab)
     addDoNotTrackScript(tab)
@@ -264,7 +267,7 @@ internal fun MainActivity.openNewTab(isIncognito: Boolean, url: String = getHome
         onPageFinishedCallback = { url -> if (tabManager.activeTab?.id == tab.id) onPageFinished(url) },
         onTabUrlUpdatedCallback = { wv, url -> onTabUrlUpdated(wv, url) },
         onWebsiteBlockedCallback = { blockedUrl -> onWebsiteBlocked(blockedUrl, tab.url, tab.id) },
-        getDesktopHeaders = { buildRequestHeaders() },
+        getDesktopHeaders = { buildRequestHeaders(profileId = tab.profileId) },
         getTabId = { tab.id },
         isIncognito = { tab.isIncognito },
         isCustomHttpAuthEnabled = { isCustomHttpAuthEnabled() },
@@ -324,7 +327,8 @@ internal fun MainActivity.attachActiveWebView() {
     tab.pendingUrl?.let { pending ->
         tab.pendingUrl = null
         prepareCacheForNavigation(tab, pending)
-        tab.webView.loadUrl(pending)
+        val headers = buildUserAgentClientHintHeaders(tab.profileId)
+        if (headers != null) tab.webView.loadUrl(pending, headers) else tab.webView.loadUrl(pending)
     }
     updateIncognitoState(tab.isIncognito)
     uiState.activeTabId = tab.id
@@ -370,7 +374,7 @@ internal fun MainActivity.openRefreshLinkTab(url: String) {
     val webView = createWebView(false)
     val tab = BrowserTab(url = url, isRefreshLinkTab = true, webView = webView)
     val index = tabManager.add(tab)
-    if (isDesktopMode) addDesktopScript(tab)
+    applyTabWebIdentity(tab, force = true)
     addAutoplayScript(tab)
     addSaveDataScript(tab)
     addDoNotTrackScript(tab)
@@ -383,7 +387,7 @@ internal fun MainActivity.openRefreshLinkTab(url: String) {
         onPageFinishedCallback = { u -> if (tabManager.activeTab?.id == tab.id) onPageFinished(u) },
         onTabUrlUpdatedCallback = { wv, u -> onTabUrlUpdated(wv, u) },
         onWebsiteBlockedCallback = { blockedUrl -> onWebsiteBlocked(blockedUrl, tab.url, tab.id) },
-        getDesktopHeaders = { buildRequestHeaders() },
+        getDesktopHeaders = { buildRequestHeaders(profileId = tab.profileId) },
         getTabId = { tab.id },
         isIncognito = { tab.isIncognito },
         isCustomHttpAuthEnabled = { isCustomHttpAuthEnabled() },
@@ -421,6 +425,10 @@ internal fun MainActivity.cleanupRefreshLinkTabs() {
     val previousIndex = refreshLinkSession?.previousTabIndex ?: -1
     val indices = tabManager.tabs.indices.filter { tabManager.tabs[it].isRefreshLinkTab }.reversed()
     for (i in indices) {
+        tabManager.tabs.getOrNull(i)?.let { tab ->
+            removeDesktopScript(tab)
+            releaseTabWebIdentity(tab)
+        }
         tabManager.closeTab(i)
     }
     resetProgressBar()
@@ -444,6 +452,7 @@ internal fun MainActivity.closePopupTabToOpener(tab: BrowserTab): Boolean {
     if (closingIndex !in tabManager.tabs.indices) return false
 
     removeDesktopScript(tab)
+    releaseTabWebIdentity(tab)
     onQuiverGuardTabClosed(tab)
     com.jhaiian.clint.mediacapture.MediaCaptureStore.removeTab(tab.id)
     if (!tab.isIncognito) com.jhaiian.clint.ui.FaviconCache.evict(this, tab.url)

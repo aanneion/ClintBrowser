@@ -93,6 +93,8 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
     internal var desktopModeHost: String? = null
     internal var autoDesktopPendingReload: String? = null
     internal val desktopScriptHandlers = mutableMapOf<String, ScriptHandler>()
+    internal val profileIdentityScriptHandlers = mutableMapOf<String, ScriptHandler>()
+    internal val appliedWebIdentitySignatures = mutableMapOf<String, String>()
     internal val autoplayScriptHandlers = mutableMapOf<String, ScriptHandler>()
     internal val saveDataScriptHandlers = mutableMapOf<String, ScriptHandler>()
     internal val doNotTrackScriptHandlers = mutableMapOf<String, ScriptHandler>()
@@ -465,6 +467,9 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
         if (isFinishing) return
         syncFramelessShortcuts()
         closeInactiveTabs()
+        if (::prefs.isInitialized) {
+            tabManager.tabs.forEach { applyTabWebIdentity(it) }
+        }
         if (::swipeRefreshView.isInitialized) updateSwipeRefreshColors(uiState.isIncognito)
         bottomBarAnimator2?.cancel()
         uiState.topBarFraction = 0f
@@ -513,6 +518,8 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
             refreshLinkSession = null
         }
         tabManager.destroyAll()
+        profileIdentityScriptHandlers.clear()
+        appliedWebIdentitySignatures.clear()
         suggestionFetcher?.cancel()
         suggestionsBgThread?.quitSafely()
         quiverGuardJobs.clear()
@@ -627,6 +634,7 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
             val index = tabManager.tabs.indexOfFirst { it.id == id }
             val tab = tabManager.tabs.getOrNull(index) ?: return@forEach
             removeDesktopScript(tab)
+            releaseTabWebIdentity(tab)
             onQuiverGuardTabClosed(tab)
             com.jhaiian.clint.mediacapture.MediaCaptureStore.removeTab(tab.id)
             com.jhaiian.clint.ui.FaviconCache.evict(this, tab.url)
@@ -639,6 +647,7 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
         val tab = tabManager.tabs.getOrNull(index)
         tab?.let {
             removeDesktopScript(it)
+            releaseTabWebIdentity(it)
             onQuiverGuardTabClosed(it)
             com.jhaiian.clint.mediacapture.MediaCaptureStore.removeTab(it.id)
             if (!it.isIncognito) com.jhaiian.clint.ui.FaviconCache.evict(this, it.url)
@@ -756,14 +765,11 @@ class MainActivity : ClintActivity(), OverlayHostActivity, SnackbarHostActivity,
             }
         }
 
-        tabManager.tabs.forEach { tab ->
-            tab.webView.settings.userAgentString = buildUserAgent()
-            applyUserAgentMetadata(tab.webView)
-            if (isDesktopMode) addDesktopScript(tab) else removeDesktopScript(tab)
-        }
+        tabManager.tabs.forEach { tab -> applyTabWebIdentity(tab, force = true) }
 
         if (wv != null && !currentWebUrl.isNullOrEmpty()) {
-            val headers = buildRequestHeaders(currentWebUrl)
+            val activeProfileId = tabManager.activeTab?.profileId ?: com.jhaiian.clint.profiles.WebProfiles.DEFAULT_ID
+            val headers = buildRequestHeaders(currentWebUrl, activeProfileId)
             if (headers != null) wv.loadUrl(currentWebUrl, headers) else wv.reload()
         } else wv?.reload()
     }

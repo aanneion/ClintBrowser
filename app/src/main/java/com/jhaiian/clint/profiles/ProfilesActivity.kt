@@ -47,6 +47,10 @@ class ProfilesActivity : ClintActivity() {
                         ProfileRepository.update(this@ProfilesActivity, id, name, color)
                         reload()
                     },
+                    onUpdateIdentity = { id, preset, presentation ->
+                        ProfileRepository.updateIdentity(this@ProfilesActivity, id, preset, presentation)
+                        reload()
+                    },
                     onClearData = { profile ->
                         WebProfiles.clearData(profile.id)
                         Toast.makeText(this@ProfilesActivity, R.string.profiles_data_cleared, Toast.LENGTH_SHORT).show()

@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.DropdownMenu
@@ -90,12 +91,14 @@ fun ProfilesScreen(
     onExit: () -> Unit,
     onCreate: (String, Int) -> Unit,
     onUpdate: (String, String, Int) -> Unit,
+    onUpdateIdentity: (String, ProfileIdentityPreset, ProfilePresentationMode) -> Unit,
     onClearData: (BrowserProfile) -> Unit,
     onDelete: (BrowserProfile) -> ProfileDeleteResult
 ) {
     val colors = LocalClintColors.current
     var showCreate by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<BrowserProfile?>(null) }
+    var identityEditing by remember { mutableStateOf<BrowserProfile?>(null) }
     var clearing by remember { mutableStateOf<BrowserProfile?>(null) }
     var deleting by remember { mutableStateOf<BrowserProfile?>(null) }
     var inUse by remember { mutableStateOf<BrowserProfile?>(null) }
@@ -169,12 +172,17 @@ fun ProfilesScreen(
                                 RowDivider(colors.divider)
                                 ProfileRow(
                                     name = profile.name,
-                                    summary = null,
+                                    summary = stringResource(
+                                        R.string.profiles_identity_row_summary,
+                                        stringResource(profile.identityPreset.titleRes),
+                                        stringResource(profile.presentationMode.titleRes)
+                                    ),
                                     color = profile.color,
                                     onClick = { editing = profile },
                                     menu = {
                                         ProfileMenu(
                                             onEdit = { editing = profile },
+                                            onIdentity = { identityEditing = profile },
                                             onClear = { clearing = profile },
                                             onDelete = { deleting = profile }
                                         )
@@ -235,6 +243,19 @@ fun ProfilesScreen(
             hideSystemNavigation = hideSystemNavigation,
             onDismiss = { editing = null },
             onConfirm = { name, color -> editing = null; onUpdate(target.id, name, color) }
+        )
+    }
+
+    identityEditing?.let { target ->
+        ProfileIdentityDialog(
+            profile = target,
+            hideStatusBar = hideStatusBar,
+            hideSystemNavigation = hideSystemNavigation,
+            onDismiss = { identityEditing = null },
+            onSave = { preset, presentation ->
+                identityEditing = null
+                onUpdateIdentity(target.id, preset, presentation)
+            }
         )
     }
 
@@ -312,7 +333,7 @@ private fun ProfileRow(
 }
 
 @Composable
-private fun ProfileMenu(onEdit: () -> Unit, onClear: () -> Unit, onDelete: () -> Unit) {
+private fun ProfileMenu(onEdit: () -> Unit, onIdentity: () -> Unit, onClear: () -> Unit, onDelete: () -> Unit) {
     val colors = LocalClintColors.current
     var expanded by remember { mutableStateOf(false) }
     Box {
@@ -328,6 +349,9 @@ private fun ProfileMenu(onEdit: () -> Unit, onClear: () -> Unit, onDelete: () ->
         ) {
             ListMenuItem(Icons.Filled.Edit, stringResource(R.string.action_edit), checked = false) {
                 expanded = false; onEdit()
+            }
+            ListMenuItem(Icons.Filled.Language, stringResource(R.string.profiles_identity_preferences), checked = false) {
+                expanded = false; onIdentity()
             }
             ListMenuItem(Icons.Filled.CleaningServices, stringResource(R.string.profiles_menu_clear_data), checked = false) {
                 expanded = false; onClear()
