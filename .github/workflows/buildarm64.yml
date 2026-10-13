@@ -9,6 +9,8 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout Repository
@@ -51,6 +53,9 @@ jobs:
       - name: Build GitHub Release APKs
         run: ./gradlew assembleGithubRelease
 
+      - name: Verify APK signatures and alignment
+        run: bash scripts/verify-apks.sh app/build/outputs/apk/github/release
+
       - name: List generated APKs
         run: find app/build/outputs/apk/github/release -name "*.apk" | sort
 
@@ -65,8 +70,9 @@ jobs:
             ARTIFACT_NAME="Clint-Universal"
           fi
           if [ -z "$APK_PATH" ]; then
-            APK_PATH="$(find "$OUT_DIR" -maxdepth 1 -name '*.apk' | sort | head -n 1)"
-            ARTIFACT_NAME="Clint-APK"
+            APK_PATH="$OUT_DIR/app-github-release.apk"
+            ARTIFACT_NAME="Clint-Universal"
+            [ -f "$APK_PATH" ] || APK_PATH=""
           fi
           if [ -z "$APK_PATH" ]; then
             echo "::error::No APK found in $OUT_DIR"
@@ -83,3 +89,16 @@ jobs:
           name: ${{ steps.select_apk.outputs.artifact_name }}
           path: ${{ steps.select_apk.outputs.apk_path }}
           if-no-files-found: error
+
+  publish:
+    name: Publish build pre-release
+    needs: build
+    # PRs (including same-repository PRs) remain read-only and artifact-only.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/publish-build.yml
+    with:
+      artifact-pattern: 'Clint-*'
+      build-kind: release

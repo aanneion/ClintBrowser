@@ -2,9 +2,11 @@
 #
 # Builds the GitHub and FOSS release APKs for every push to main and every
 # pull request, and uploads them as workflow artifacts so they can be
-# downloaded and installed for testing. This workflow validates the build
-# only — it does not create GitHub Releases (see release.yml, which publishes
-# tagged releases).
+# downloaded and installed for testing. These are debug-key-signed, optimized
+# release builds with a separate .ci application ID, not production updates.
+# No release signing secrets are exposed to pull-request builds. Tagged
+# production releases are built by release.yml. Successful non-PR runs also
+# publish their APKs as a uniquely tagged GitHub pre-release.
 
 name: Continuous Release
 
@@ -35,6 +37,9 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
+      - name: Test APK verification and release tooling
+        run: python3 -m unittest discover -s tests -v
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -62,26 +67,11 @@ jobs:
       - name: Grant Execute Permission for gradlew
         run: chmod +x gradlew
 
-      # Secrets are unavailable on pull requests from forks, so signing is
-      # skipped when the keystore secret is absent and the build falls back
-      # to unsigned APKs.
-      - name: Decode Signing Keystore
-        env:
-          BASE_64_SIGNING_KEY: ${{ secrets.BASE_64_SIGNING_KEY }}
-        run: |
-          if [ -n "$BASE_64_SIGNING_KEY" ]; then
-            printf '%s' "$BASE_64_SIGNING_KEY" | tr -d '\n' | base64 -d > app/release_keystore.jks
-          else
-            echo "No signing keystore secret available; building unsigned APKs."
-          fi
+      - name: Build installable GitHub and FOSS CI APKs
+        run: ./gradlew assembleGithubRelease assembleFossRelease -PciBuild=true
 
-      - name: Create local.properties
-        env:
-          LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
-        run: printf '%s\n' "$LOCAL_PROPERTIES" > local.properties
-
-      - name: Build GitHub and FOSS Release APKs
-        run: ./gradlew assembleGithubRelease assembleFossRelease
+      - name: Verify APK signatures and alignment
+        run: bash scripts/verify-apks.sh app/build/outputs/apk/github/release app/build/outputs/apk/foss/release
 
       - name: List generated APKs
         run: find app/build/outputs/apk -name "*.apk" | sort
@@ -99,3 +89,16 @@ jobs:
           name: Clint-foss
           path: app/build/outputs/apk/foss/release/*.apk
           if-no-files-found: error
+
+  publish:
+    name: Publish build pre-release
+    needs: build
+    # PRs (including same-repository PRs) remain read-only and artifact-only.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/publish-build.yml
+    with:
+      artifact-pattern: 'Clint-*'
+      build-kind: ci

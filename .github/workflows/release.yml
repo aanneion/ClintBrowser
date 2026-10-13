@@ -92,6 +92,9 @@ jobs:
         run: |
           ./gradlew assembleGithubRelease assembleFossRelease
 
+      - name: Verify APK signatures and alignment
+        run: bash scripts/verify-apks.sh app/build/outputs/apk/github/release app/build/outputs/apk/foss/release
+
       - name: Detect ABI split mode
         id: mode
         run: |
