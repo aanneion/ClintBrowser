@@ -13,6 +13,10 @@ if (localPropertiesFile.exists()) {
     }
 }
 
+// Explicit opt-in for installable CI artifacts; never silently debug-sign a
+// production package. CI builds can coexist with the real release app.
+val ciBuild = providers.gradleProperty("ciBuild").map { it.toBoolean() }.getOrElse(false)
+
 android {
     namespace = "com.jhaiian.clint"
     compileSdk = 37
@@ -25,9 +29,9 @@ android {
         versionName = "v1.2.0-r2"
     }
 
-    val hasSigningConfig = localProperties.getProperty("signingConfig.storePassword") != null
+    val hasSigningConfig = !localProperties.getProperty("signingConfig.storePassword").isNullOrBlank()
 
-    if (hasSigningConfig) {
+    if (hasSigningConfig && !ciBuild) {
         signingConfigs {
             create("release") {
                 storeFile = rootProject.file(localProperties.getProperty("signingConfig.storeFile", "app/release_keystore.jks"))
@@ -61,8 +65,12 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            if (hasSigningConfig) {
-                signingConfig = signingConfigs["release"]
+            if (ciBuild) {
+                applicationIdSuffix = ".ci"
+                versionNameSuffix = "-ci"
+                signingConfig = signingConfigs.getByName("debug")
+            } else if (hasSigningConfig) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
         debug {
