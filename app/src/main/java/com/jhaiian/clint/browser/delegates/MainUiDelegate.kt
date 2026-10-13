@@ -213,11 +213,12 @@ internal fun MainActivity.dismissBookmarkFolderDialog() {
 
 internal fun MainActivity.loadUrl(input: String) {
     val url = formatUrl(input)
-    val wv = tabManager.activeTab?.webView ?: return
-    tabManager.activeTab?.url = url
+    val tab = tabManager.activeTab ?: return
+    val wv = tab.webView
+    tab.url = url
     uiState.isHomePage = isClintHomeUrl(url)
-    val headers = buildRequestHeaders(url)
-    tabManager.activeTab?.let { prepareCacheForNavigation(it, url) }
+    val headers = buildRequestHeaders(url, tab.profileId)
+    prepareCacheForNavigation(tab, url)
     if (headers != null) wv.loadUrl(url, headers) else wv.loadUrl(url)
     hideKeyboardOnly()
 }
@@ -293,13 +294,10 @@ internal fun MainActivity.onPageStarted(url: String) {
                     isSaved && !isDesktopMode -> {
                         isDesktopMode = true
                         desktopModeHost = host
-                        tabManager.tabs.forEach { tab ->
-                            tab.webView.settings.userAgentString = buildUserAgent()
-                            applyUserAgentMetadata(tab.webView)
-                            addDesktopScript(tab)
-                        }
-                        tabManager.activeTab?.webView?.let { wv ->
-                            val headers = buildDesktopHeaders()
+                        tabManager.tabs.forEach { tab -> applyTabWebIdentity(tab, force = true) }
+                        tabManager.activeTab?.let { tab ->
+                            val wv = tab.webView
+                            val headers = buildUserAgentClientHintHeaders(tab.profileId)
                             if (headers != null) {
                                 autoDesktopPendingReload = url
                                 wv.loadUrl(url, headers)
@@ -315,11 +313,7 @@ internal fun MainActivity.onPageStarted(url: String) {
                         } else {
                             isDesktopMode = false
                             desktopModeHost = null
-                            tabManager.tabs.forEach { tab ->
-                                tab.webView.settings.userAgentString = buildUserAgent()
-                                applyUserAgentMetadata(tab.webView)
-                                removeDesktopScript(tab)
-                            }
+                            tabManager.tabs.forEach { tab -> applyTabWebIdentity(tab, force = true) }
                             tabManager.activeTab?.webView?.reload()
                         }
                     }

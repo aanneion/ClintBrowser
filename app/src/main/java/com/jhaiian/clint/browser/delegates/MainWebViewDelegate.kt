@@ -24,8 +24,11 @@ import com.jhaiian.clint.mediacapture.MediaCaptureDetector
 import com.jhaiian.clint.mediacapture.MediaCaptureStore
 import com.jhaiian.clint.quiver.engine.QuiverGuardWebIntegration
 import com.jhaiian.clint.tabs.BrowserTab
+import com.jhaiian.clint.profiles.ProfileIdentityPreset
+import com.jhaiian.clint.profiles.ProfileRepository
 import com.jhaiian.clint.profiles.WebProfiles
 import com.jhaiian.clint.userscripts.UserScriptEngine
+import org.json.JSONObject
 import com.jhaiian.clint.util.registeredDomain
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
@@ -48,8 +51,8 @@ internal fun MainActivity.createWebView(isIncognito: Boolean, profileId: String 
     settings.allowFileAccess = false
     settings.allowContentAccess = false
     settings.safeBrowsingEnabled = false
-    settings.userAgentString = buildUserAgent()
-    applyUserAgentMetadata(webView)
+    settings.userAgentString = buildUserAgent(profileId)
+    applyUserAgentMetadata(webView, profileId)
     if (!isIncognito && WebViewFeature.isFeatureSupported(WebViewFeature.WEB_AUTHENTICATION)) {
         WebSettingsCompat.setWebAuthenticationSupport(settings, WebSettingsCompat.WEB_AUTHENTICATION_SUPPORT_FOR_APP)
     }
@@ -148,16 +151,13 @@ internal fun MainActivity.installServiceWorkerMediaCapture() {
     })
 }
 
-internal fun MainActivity.buildDesktopHeaders(): Map<String, String>? {
-    if (!isDesktopMode) return null
-    val defaultUA = WebSettings.getDefaultUserAgent(this)
-    val majorVersion = Regex("Chrome/(\\d+)").find(defaultUA)?.groupValues?.get(1) ?: "134"
-    val secChUa = "\"Chromium\";v=\"" + majorVersion + "\", \"Not-A.Brand\";v=\"24\", \"Google Chrome\";v=\"" + majorVersion + "\""
-    return mapOf(
-        "Sec-CH-UA" to secChUa,
-        "Sec-CH-UA-Mobile" to "?0",
-        "Sec-CH-UA-Platform" to "\"Windows\""
-    )
+internal fun MainActivity.buildUserAgentClientHintHeaders(profileId: String? = null): Map<String, String>? {
+    val preset = when {
+        isDesktopMode -> ProfileIdentityPreset.WINDOWS_DESKTOP
+        profileId.isNullOrEmpty() || profileId == WebProfiles.DEFAULT_ID -> null
+        else -> ProfileRepository.get(this, profileId)?.identityPreset
+    } ?: return null
+    return preset.clientHintHeaders(this).takeIf { it.isNotEmpty() }
 }
 
 internal fun MainActivity.loadDataSaverJs(filename: String): String =
@@ -206,9 +206,9 @@ internal fun MainActivity.removeDataSaverMediaScript(tab: BrowserTab) {
 internal fun MainActivity.isDoNotTrackActive(): Boolean =
     prefs.getBoolean("do_not_track", true)
 
-internal fun MainActivity.buildRequestHeaders(url: String? = null): Map<String, String>? {
+internal fun MainActivity.buildRequestHeaders(url: String? = null, profileId: String? = null): Map<String, String>? {
     val headers = LinkedHashMap<String, String>()
-    buildDesktopHeaders()?.let { headers.putAll(it) }
+    buildUserAgentClientHintHeaders(profileId)?.let { headers.putAll(it) }
     if (isSaveDataActive(url)) headers["Save-Data"] = "on"
     if (isDoNotTrackActive()) headers["DNT"] = "1"
     return if (headers.isEmpty()) null else headers
@@ -228,7 +228,7 @@ internal fun MainActivity.removeDoNotTrackScript(tab: BrowserTab) {
 internal fun MainActivity.reloadActiveTabWithHeaders() {
     val activeWebView = tabManager.activeTab?.webView
     val activeUrl = activeWebView?.url
-    val reloadHeaders = buildRequestHeaders(activeUrl)
+    val reloadHeaders = buildRequestHeaders(activeUrl, tabManager.activeTab?.profileId)
     if (activeWebView != null && reloadHeaders != null && activeUrl != null && activeUrl.startsWith("http")) {
         activeWebView.loadUrl(activeUrl, reloadHeaders)
     } else {
@@ -252,17 +252,26 @@ internal fun MainActivity.removeSaveDataScript(tab: BrowserTab) {
     saveDataScriptHandlers.remove(tab.id)?.remove()
 }
 
-internal fun MainActivity.buildUserAgent(): String {
+internal fun MainActivity.buildUserAgent(profileId: String = WebProfiles.DEFAULT_ID): String {
+    if (isDesktopMode) {
+        val defaultUA = WebSettings.getDefaultUserAgent(this)
+        val chromeVersion = Regex("Chrome/([\\d.]+)").find(defaultUA)?.groupValues?.get(1) ?: "134.0.0.0"
+        return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVersion Safari/537.36"
+    }
+
+    if (profileId != WebProfiles.DEFAULT_ID) {
+        ProfileRepository.get(this, profileId)?.let { profile ->
+            return profile.identityPreset.userAgent(this)
+        }
+    }
+
     val defaultUA = WebSettings.getDefaultUserAgent(this)
     val chromeVersion = Regex("Chrome/([\\d.]+)").find(defaultUA)?.groupValues?.get(1) ?: "134.0.0.0"
     val androidVersion = android.os.Build.VERSION.RELEASE
-    return when {
-        isDesktopMode ->
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeVersion + " Safari/537.36"
-        prefs.getBoolean("custom_user_agent", true) ->
-            "Mozilla/5.0 (Linux; Android " + androidVersion + "; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeVersion + " Mobile Safari/537.36"
-        else ->
-            defaultUA
+    return if (prefs.getBoolean("custom_user_agent", true)) {
+        "Mozilla/5.0 (Linux; Android $androidVersion; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/$chromeVersion Mobile Safari/537.36"
+    } else {
+        defaultUA
     }
 }
 
@@ -335,9 +344,13 @@ internal fun MainActivity.applyAutofillSettings() {
     ClintAutofill.cancel(this)
 }
 
-internal fun MainActivity.applyUserAgentMetadata(webView: WebView) {
+internal fun MainActivity.applyUserAgentMetadata(
+    webView: WebView,
+    profileId: String = WebProfiles.DEFAULT_ID
+) {
     if (!WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) return
     if (isDesktopMode) {
+        // Keep the pre-existing global Desktop Mode metadata unchanged.
         val defaultUA = WebSettings.getDefaultUserAgent(this)
         val chromeVersion = Regex("Chrome/([\\d.]+)").find(defaultUA)?.groupValues?.get(1) ?: "134.0.0.0"
         val majorVersion = chromeVersion.substringBefore(".")
@@ -349,28 +362,92 @@ internal fun MainActivity.applyUserAgentMetadata(webView: WebView) {
             UserAgentMetadata.BrandVersion.Builder()
                 .setBrand("Google Chrome").setMajorVersion(majorVersion).setFullVersion(chromeVersion).build()
         )
-        WebSettingsCompat.setUserAgentMetadata(
-            webView.settings,
-            UserAgentMetadata.Builder()
-                .setBrandVersionList(brands)
-                .setMobile(false)
-                .setPlatform("Windows")
-                .build()
-        )
-    } else {
-        WebSettingsCompat.setUserAgentMetadata(
-            webView.settings,
-            UserAgentMetadata.Builder().build()
-        )
+        val legacyMetadata = UserAgentMetadata.Builder()
+            .setBrandVersionList(brands)
+            .setMobile(false)
+            .setPlatform("Windows")
+            .build()
+        runCatching { WebSettingsCompat.setUserAgentMetadata(webView.settings, legacyMetadata) }
+        return
     }
+
+    val preset = if (profileId != WebProfiles.DEFAULT_ID) {
+        ProfileRepository.get(this, profileId)?.identityPreset
+    } else {
+        null
+    }
+    val metadata = preset?.userAgentMetadata(this) ?: UserAgentMetadata.Builder().build()
+    runCatching { WebSettingsCompat.setUserAgentMetadata(webView.settings, metadata) }
+}
+
+private fun MainActivity.webIdentitySignature(tab: BrowserTab): String {
+    val profile = if (tab.isIncognito || tab.profileId == WebProfiles.DEFAULT_ID) {
+        null
+    } else {
+        ProfileRepository.get(this, tab.profileId)
+    }
+    val base = if (profile != null) {
+        "${profile.identityPreset.storageKey}:${profile.presentationMode.storageKey}"
+    } else {
+        "legacy:${prefs.getBoolean("custom_user_agent", true)}"
+    }
+    return "$base:${tab.isIncognito}:$isDesktopMode"
+}
+
+/** Apply the profile identity to an existing tab; the returned value indicates a changed signature. */
+internal fun MainActivity.applyTabWebIdentity(tab: BrowserTab, force: Boolean = false): Boolean {
+    val signature = webIdentitySignature(tab)
+    val previousSignature = appliedWebIdentitySignatures[tab.id]
+    if (!force && previousSignature == signature) return false
+
+    val oldUserAgent = runCatching { tab.webView.settings.userAgentString }.getOrNull()
+    val userAgent = buildUserAgent(tab.profileId)
+    tab.webView.settings.userAgentString = userAgent
+    applyUserAgentMetadata(tab.webView, tab.profileId)
+
+    if (isDesktopMode) {
+        removeProfileIdentityScript(tab)
+        addDesktopScript(tab)
+    } else {
+        removeDesktopScript(tab)
+        addProfileIdentityScript(tab)
+    }
+    appliedWebIdentitySignatures[tab.id] = signature
+    return oldUserAgent != userAgent || (previousSignature != null && previousSignature != signature)
+}
+
+internal fun MainActivity.addProfileIdentityScript(tab: BrowserTab) {
+    removeProfileIdentityScript(tab)
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return
+    if (tab.isIncognito || tab.profileId == WebProfiles.DEFAULT_ID) return
+    val profile = ProfileRepository.get(this, tab.profileId) ?: return
+    val preset = profile.identityPreset
+    val layout = preset.presentationLayout(profile.presentationMode)
+    val hasPlatformOverride = preset.navigatorPlatform != null || preset.navigatorVendor != null
+    if (!hasPlatformOverride && layout == "native" && preset.isChromium) return
+
+    val config = JSONObject()
+        .put("platform", preset.navigatorPlatform ?: JSONObject.NULL)
+        .put("vendor", preset.navigatorVendor ?: JSONObject.NULL)
+        .put("chromium", preset.isChromium)
+        .put("layout", layout)
+    val script = loadJsAsset("profile_presentation.js")
+        .replace("__CLINT_PROFILE_IDENTITY_CONFIG__", config.toString())
+    profileIdentityScriptHandlers[tab.id] =
+        WebViewCompat.addDocumentStartJavaScript(tab.webView, script, setOf("*"))
+}
+
+internal fun MainActivity.removeProfileIdentityScript(tab: BrowserTab) {
+    profileIdentityScriptHandlers.remove(tab.id)?.remove()
+}
+
+internal fun MainActivity.releaseTabWebIdentity(tab: BrowserTab) {
+    removeProfileIdentityScript(tab)
+    appliedWebIdentitySignatures.remove(tab.id)
 }
 
 internal fun MainActivity.applyUserAgent() {
-    val ua = buildUserAgent()
-    tabManager.tabs.forEach {
-        it.webView.settings.userAgentString = ua
-        applyUserAgentMetadata(it.webView)
-    }
+    tabManager.tabs.forEach { applyTabWebIdentity(it, force = true) }
     tabManager.activeTab?.webView?.reload()
 }
 

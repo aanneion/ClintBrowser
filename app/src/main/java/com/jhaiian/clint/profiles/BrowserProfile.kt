@@ -4,7 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import java.util.UUID
 
-data class BrowserProfile(val id: String, val name: String, val color: Int)
+data class BrowserProfile(
+    val id: String,
+    val name: String,
+    val color: Int,
+    val identityPreset: ProfileIdentityPreset = ProfileIdentityPreset.default,
+    val presentationMode: ProfilePresentationMode = ProfilePresentationMode.FOLLOW_PRESET
+)
 
 object ProfileRepository {
 
@@ -27,12 +33,26 @@ object ProfileRepository {
         val result = mutableListOf<BrowserProfile>()
         database(context).readableDatabase.query(
             ProfileDatabase.TABLE,
-            arrayOf(ProfileDatabase.COL_ID, ProfileDatabase.COL_NAME, ProfileDatabase.COL_COLOR),
+            arrayOf(
+                ProfileDatabase.COL_ID,
+                ProfileDatabase.COL_NAME,
+                ProfileDatabase.COL_COLOR,
+                ProfileDatabase.COL_IDENTITY_PRESET,
+                ProfileDatabase.COL_PRESENTATION_MODE
+            ),
             null, null, null, null,
             "${ProfileDatabase.COL_POSITION} ASC"
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                result.add(BrowserProfile(cursor.getString(0), cursor.getString(1), cursor.getInt(2)))
+                result.add(
+                    BrowserProfile(
+                        id = cursor.getString(0),
+                        name = cursor.getString(1),
+                        color = cursor.getInt(2),
+                        identityPreset = ProfileIdentityPreset.fromStorageKey(cursor.getString(3)),
+                        presentationMode = ProfilePresentationMode.fromStorageKey(cursor.getString(4))
+                    )
+                )
             }
         }
         return result
@@ -41,11 +61,17 @@ object ProfileRepository {
     fun get(context: Context, id: String): BrowserProfile? = all(context).firstOrNull { it.id == id }
 
     fun create(context: Context, name: String, color: Int): BrowserProfile {
-        val profile = BrowserProfile("p" + UUID.randomUUID().toString().replace("-", "").take(12), name, color)
+        val profile = BrowserProfile(
+            id = "p" + UUID.randomUUID().toString().replace("-", "").take(12),
+            name = name,
+            color = color
+        )
         val values = ContentValues().apply {
             put(ProfileDatabase.COL_ID, profile.id)
             put(ProfileDatabase.COL_NAME, profile.name)
             put(ProfileDatabase.COL_COLOR, profile.color)
+            put(ProfileDatabase.COL_IDENTITY_PRESET, profile.identityPreset.storageKey)
+            put(ProfileDatabase.COL_PRESENTATION_MODE, profile.presentationMode.storageKey)
         }
         database(context).writableDatabase.insert(ProfileDatabase.TABLE, null, values)
         return profile
@@ -55,6 +81,19 @@ object ProfileRepository {
         val values = ContentValues().apply {
             put(ProfileDatabase.COL_NAME, name)
             put(ProfileDatabase.COL_COLOR, color)
+        }
+        database(context).writableDatabase.update(ProfileDatabase.TABLE, values, "${ProfileDatabase.COL_ID} = ?", arrayOf(id))
+    }
+
+    fun updateIdentity(
+        context: Context,
+        id: String,
+        identityPreset: ProfileIdentityPreset,
+        presentationMode: ProfilePresentationMode
+    ) {
+        val values = ContentValues().apply {
+            put(ProfileDatabase.COL_IDENTITY_PRESET, identityPreset.storageKey)
+            put(ProfileDatabase.COL_PRESENTATION_MODE, presentationMode.storageKey)
         }
         database(context).writableDatabase.update(ProfileDatabase.TABLE, values, "${ProfileDatabase.COL_ID} = ?", arrayOf(id))
     }
