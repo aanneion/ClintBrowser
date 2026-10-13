@@ -54,9 +54,32 @@ jobs:
       - name: List generated APKs
         run: find app/build/outputs/apk/github/release -name "*.apk" | sort
 
-      - name: Upload arm64-v8a APK
+      - name: Select APK to Upload
+        id: select_apk
+        run: |
+          OUT_DIR="app/build/outputs/apk/github/release"
+          APK_PATH="$(find "$OUT_DIR" -maxdepth 1 -name '*arm64-v8a*.apk' | sort | head -n 1)"
+          ARTIFACT_NAME="Clint-arm64-v8a"
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH="$(find "$OUT_DIR" -maxdepth 1 -name '*universal*.apk' | sort | head -n 1)"
+            ARTIFACT_NAME="Clint-Universal"
+          fi
+          if [ -z "$APK_PATH" ]; then
+            APK_PATH="$(find "$OUT_DIR" -maxdepth 1 -name '*.apk' | sort | head -n 1)"
+            ARTIFACT_NAME="Clint-APK"
+          fi
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No APK found in $OUT_DIR"
+            ls -la "$OUT_DIR" || true
+            exit 1
+          fi
+          echo "Selected $APK_PATH for artifact $ARTIFACT_NAME"
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Clint-arm64-v8a
-          path: app/build/outputs/apk/github/release/app-github-arm64-v8a-release.apk
+          name: ${{ steps.select_apk.outputs.artifact_name }}
+          path: ${{ steps.select_apk.outputs.apk_path }}
           if-no-files-found: error
